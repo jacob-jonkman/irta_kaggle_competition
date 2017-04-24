@@ -1,6 +1,5 @@
 from stemming.porter2 import stem #for stemming of words
-import numpy as np
-#import _thread as thr #to enable multithreading
+import numpy as np #always useful. currently not in use
 import threading as thr #more hogh-level multithreading library
 from queue import Queue #to limit the amount of threads
 import csv #to read in csv files
@@ -8,50 +7,77 @@ from nltk.corpus import stopwords #stopwords to filter out
 from difflib import SequenceMatcher as seqmatch #similarity measure between strings
 
 class Hoi:
-
+   """
+   Something about what this program is about.
+   """
    def __init__(self, datafile, amountOfThreads):
-      #self.truesims = []
-      #self.falsesims = []
+      # The file the data is read out of.
       self.datafile = datafile
-      self.wordsFilter = stopwords.words('english') #to enable usage in threads
+      # To enable usage in threads, the stopwords are cached here.
+      # Otherwise, the nltk library would try to load multiple times at
+      # the same time, which gives errors.
+      self.wordsFilter = stopwords.words('english')
+      # A queue to hold all the data and distribute it to the threads.
       self.queue = Queue()
+      # A list of all present threads.
       self.threads = []
-      #self.lock = thr.allocate_lock() #with the _thread import
-      self.lock = thr.Lock() #with the threading import
+      # A lock to prevent multiple threads writing to the same variable at
+      # the same time.
+      # Not actually used now.
+      self.lock = thr.Lock()
+      # The amount of threads which should be used.
+      # Is required on multiple occasions, and therefore made a class variable.
       self.aOT = amountOfThreads
+      # Amount of, respectively, true and false positives, and true and false 
+      # negatives. All initialised to 0.
       self.tp = self.fp = self.tn = self.fn = 0
       
-      self.startWorkers()
-      
    def startWorkers(self):
+      """
+      Start as many threads as ordered (provided by variable self.aOT).
+      Also stores all threads in self.threads, so they can be stopped later as well.
+      """
       for i in range(self.aOT):
          t = thr.Thread(target=self.threadWorker)
          t.start()
          self.threads.append(t)
          
    def threadWorker(self):
+      """
+      Basically the process of a thread. Constantly tries to work on a job, 
+      and ends when none are available anymore.
+      The queue holds all data, and distributes it over the workers, which
+      request the data to work on.
+      """
       while True:
-         row = self.queue.get()
-         if row is None:
+         row = self.queue.get() #get a row of data
+         if row is None: #ending criterium
             break
-         self.similarityQuestions(row)
-         self.queue.task_done()
+         self.similarityQuestions(row) #the actual working function
+         self.queue.task_done() #inform the queue one task is done
 
-   def stemquestion(self, question):
-     stemmedquestion = []
-     for word in str(question).split():
-       if word not in self.wordsFilter:
-         stemmedquestion.append(stem(word.lower()))
-     return stemmedquestion
+   def stemQuestion(self, question):
+      """
+      Stem all the words in a given question.
+      Also filter all the words on a given filter: Filtered words are removed.
+      """
+      stemmedquestion = []
+      for word in str(question).split():
+         if word not in self.wordsFilter:
+            stemmedquestion.append(stem(word.lower()))
+      return stemmedquestion
      
    def similarityQuestions(self, row):
-      q1 = self.stemquestion(row[3])
-      q2 = self.stemquestion(row[4])
-      #print("row: {0}, q1: {1}, q2: {2}".format(row, q1, q2))
-      #if row[5] == "1":
-      #  print(q1, q2, "\n\n")
+      """
+      Function to determine the similarity between two given questions.
+      For now uses the SequenceMatcher from difflib to do so.
+      Might want to use a custom method in the future, as this gives a low precision.
+      """
+      q1 = self.stemQuestion(row[3])
+      q2 = self.stemQuestion(row[4])
       
       # Bekijk de similarity tussen de twee questions, zie wat een goede cut-off zou zijn #
+      
       sim = seqmatch(None, q1, q2).ratio()
       if sim > 0.6: #we guess they are duplicate questions
          if row[5] == "1": #true positive
@@ -63,34 +89,32 @@ class Hoi:
             self.tn += 1
          else: #false negative
             self.fn += 1
-#      with self.lock:
-#         if row[5] == "1":
-#           self.truesims.append(sim)
-#         else:
-#           self.falsesims.append(sim)
 
 
-   def run(self):
-     with open(self.datafile, "r") as f:
-       #hasHeader = csv.Sniffer().has_header(f.read(1024))
-       #f.seek(0) #restart reading
-       reader = csv.reader(f)
-       #if hasHeader:
-       next(reader) #skip header row
-       for row in reader:
-         try:
-            #thr.start_new_thread(self.similarityQuestions, (row,)) 
-            self.queue.put(row)                 
-            #self.similarityQuestions(row)
-         except: #disadvantage: we need a lot of ctrl-c to stop it (or a kill command)
-            pass
-            #print("Error: THE END IS COMING!\nRow: {0}".format(row))
-       self.queue.join() #block until all tasks are done
-       #then stop the workers
-       for i in range(self.aOT):
-         self.queue.put(None)
-       for t in self.threads:
-         t.join()
+   def run(self):      
+      # Function which starts the threads. 
+      self.startWorkers()
+      
+      with open(self.datafile, "r") as f:
+         # These two lines are for finding out if there is a header.
+         # Can be left commented if the header being present is given.
+#        hasHeader = csv.Sniffer().has_header(f.read(1024))
+#        f.seek(0) #restart reading
+         reader = csv.reader(f)
+#        if hasHeader: #only used when 'sniffing' for a header
+         next(reader) #skip header row
+         # Read out all the rows and put them in the queue.
+         for row in reader:
+            try:
+               self.queue.put(row)
+            except:
+               print("Cannot put {0} in the queue!".format(row))
+         self.queue.join() #block until all tasks are done
+         #then stop the workers
+         for i in range(self.aOT):
+            self.queue.put(None)
+         for t in self.threads:
+            t.join()
       
 if __name__ == "__main__":
    datafile = "data/train.csv"

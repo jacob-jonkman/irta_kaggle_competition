@@ -5,33 +5,44 @@ from queue import Queue #to limit the amount of threads
 import csv #to read in csv files
 from nltk.corpus import stopwords #stopwords to filter out
 from difflib import SequenceMatcher as seqmatch #similarity measure between strings
+from PyDictionary import PyDictionary
 
-class Hoi:
+class Classifier:
    """
    Something about what this program is about.
    """
    def __init__(self, datafile, amountOfThreads):
       # The file the data is read out of.
       self.datafile = datafile
+
       # To enable usage in threads, the stopwords are cached here.
       # Otherwise, the nltk library would try to load multiple times at
       # the same time, which gives errors.
       self.wordsFilter = stopwords.words('english')
+      
       # A queue to hold all the data and distribute it to the threads.
       self.queue = Queue()
+      
       # A list of all present threads.
       self.threads = []
+      
       # A lock to prevent multiple threads writing to the same variable at
       # the same time.
       # Not actually used now.
       self.lock = thr.Lock()
+      
       # The amount of threads which should be used.
       # Is required on multiple occasions, and therefore made a class variable.
       self.aOT = amountOfThreads
+      
       # Amount of, respectively, true and false positives, and true and false 
       # negatives. All initialised to 0.
       self.tp = self.fp = self.tn = self.fn = 0
-      
+
+      # Dictionary class, used for synonym matching #
+      self.dictionary=PyDictionary()
+   
+
    def startWorkers(self):
       """
       Start as many threads as ordered (provided by variable self.aOT).
@@ -41,10 +52,10 @@ class Hoi:
          t = thr.Thread(target=self.threadWorker)
          t.start()
          self.threads.append(t)
-         
+
    def threadWorker(self):
       """
-      Basically the process of a thread. Constantly tries to work on a job, 
+      Basically the process of a thread. Constantly tries to work on a job,
       and ends when none are available anymore.
       The queue holds all data, and distributes it over the workers, which
       request the data to work on.
@@ -66,7 +77,29 @@ class Hoi:
          if word not in self.wordsFilter:
             stemmedquestion.append(stem(word.lower()))
       return stemmedquestion
-     
+
+   def computeSimilarity(self, q1, q2):
+      """
+
+      """
+      matches = 0
+      total = 0
+      for word in q1:
+         if word in q2:
+            matches += 1
+         else:
+            synonyms = self.dictionary.synonym(word)
+            if synonyms:               
+               for i in range(len(synonyms)):
+                  if synonyms[i] not in q1 and synonyms[i] in q2:
+                     matches += 1
+                     break
+         total += 1
+      if matches == 0:
+         return 0
+      else:
+         return total/matches
+
    def similarityQuestions(self, row):
       """
       Function to determine the similarity between two given questions.
@@ -76,9 +109,9 @@ class Hoi:
       q1 = self.stemQuestion(row[3])
       q2 = self.stemQuestion(row[4])
       
-      # Bekijk de similarity tussen de twee questions, zie wat een goede cut-off zou zijn #
-      
+      # Compute similarity of the two questions#
       sim = seqmatch(None, q1, q2).ratio()
+      #sim = self.computeSimilarity(q1, q2)
       if sim > 0.6: #we guess they are duplicate questions
          if row[5] == "1": #true positive
             self.tp += 1
@@ -90,18 +123,17 @@ class Hoi:
          else: #false negative
             self.fn += 1
 
-
-   def run(self):      
-      # Function which starts the threads. 
+   def run(self):
+      # Function which starts the threads.
       self.startWorkers()
       
       with open(self.datafile, "r") as f:
          # These two lines are for finding out if there is a header.
          # Can be left commented if the header being present is given.
-#        hasHeader = csv.Sniffer().has_header(f.read(1024))
-#        f.seek(0) #restart reading
+         #hasHeader = csv.Sniffer().has_header(f.read(1024))
+         #f.seek(0) #restart reading
          reader = csv.reader(f)
-#        if hasHeader: #only used when 'sniffing' for a header
+         #if hasHeader: #only used when 'sniffing' for a header
          next(reader) #skip header row
          # Read out all the rows and put them in the queue.
          for row in reader:
@@ -115,13 +147,13 @@ class Hoi:
             self.queue.put(None)
          for t in self.threads:
             t.join()
-      
+
 if __name__ == "__main__":
    datafile = "data/train.csv"
    amountOfThreads = 8
-   hoi = Hoi(datafile, amountOfThreads)
-   hoi.run()
+   classifier = Classifier(datafile, amountOfThreads)
+   classifier.run()
    print("""
    Precision: {0}
    Recall: {1}
-   """.format((hoi.tp / (hoi.tp + hoi.tn)), (hoi.tp / (hoi.tp + hoi.fp))))
+   """.format((classifier.tp / (classifier.tp + classifier.tn)), (classifier.tp / (classifier.tp + classifier.fp))))

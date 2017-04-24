@@ -4,7 +4,12 @@
 > python3 main.py
 
 # Required packages: 
-stemming, numpy, threading, queue, csv, nltk, and difflib
+stemming, numpy, threading, queue, csv, nltk, PyDictionary and difflib
+
 # Also: 
-Run nltk.download("stopwords") in the Python prompt before running the program
+Run: 
+  import nltk
+  nltk.download("stopwords")
+  
+in the Python prompt before running the program
 

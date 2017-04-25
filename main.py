@@ -163,4 +163,4 @@ if __name__ == "__main__":
    print("""
    Precision: {0}
    Recall: {1}
-   """.format((classifier.tp / (classifier.tp + classifier.tn)), (classifier.tp / (classifier.tp + classifier.fp))))
+   """.format((tp / (tp + tn)), (tp / (tp + fp))))

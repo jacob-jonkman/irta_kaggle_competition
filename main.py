@@ -5,7 +5,8 @@ from queue import Queue #to limit the amount of threads
 import csv #to read in csv files
 from nltk.corpus import stopwords #stopwords to filter out
 from difflib import SequenceMatcher as seqmatch #similarity measure between strings
-from PyDictionary import PyDictionary
+from PyDictionary import PyDictionary #to find synonyms
+import re #yay regexes. I mean: to filter out nun-alphabetical characters
 
 class Classifier:
    """
@@ -73,9 +74,11 @@ class Classifier:
       Also filter all the words on a given filter: Filtered words are removed.
       """
       stemmedquestion = []
-      for word in str(question).split():
-         if word not in self.wordsFilter:
-            stemmedquestion.append(stem(word.lower()))
+      for word in re.split("\W+", str(question)):
+         w = re.sub('[^a-z]', '', word.lower())
+         #print("w = {0}".format(w))
+         if w and (w not in self.wordsFilter):
+            stemmedquestion.append(stem(w))
       return stemmedquestion
 
    def computeSimilarity(self, q1, q2):
@@ -88,10 +91,13 @@ class Classifier:
          if word in q2:
             matches += 1
          else:
-            synonyms = self.dictionary.synonym(word)
+            try:
+               synonyms = self.dictionary.synonym(word)
+            except:
+               pass
             if synonyms:               
                for i in range(len(synonyms)):
-                  if synonyms[i] not in q1 and synonyms[i] in q2:
+                  if (synonyms[i] not in q1) and (synonyms[i] in q2):
                      matches += 1
                      break
          total += 1
@@ -110,8 +116,8 @@ class Classifier:
       q2 = self.stemQuestion(row[4])
       
       # Compute similarity of the two questions#
-      sim = seqmatch(None, q1, q2).ratio()
-      #sim = self.computeSimilarity(q1, q2)
+      #sim = seqmatch(None, q1, q2).ratio()
+      sim = self.computeSimilarity(q1, q2)
       if sim > 0.6: #we guess they are duplicate questions
          if row[5] == "1": #true positive
             self.tp += 1
@@ -147,12 +153,13 @@ class Classifier:
             self.queue.put(None)
          for t in self.threads:
             t.join()
+      return (self.tp, self.fp, self.tn, self.fn)
 
 if __name__ == "__main__":
    datafile = "data/train.csv"
-   amountOfThreads = 8
+   amountOfThreads = 16
    classifier = Classifier(datafile, amountOfThreads)
-   classifier.run()
+   tp, fp, tn, fn = classifier.run()
    print("""
    Precision: {0}
    Recall: {1}

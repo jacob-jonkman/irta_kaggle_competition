@@ -9,12 +9,14 @@ from PyDictionary import PyDictionary #to find synonyms
 import re #yay regexes. I mean: to filter out nun-alphabetical characters
 import sys, os #for parsing command-line arguments
 from getopt import getopt, GetoptError #also to parse command-line arguments
+import subprocess #to call tail
 
 class Classifier:
    """
    Something about what this program is about.
    """
-   def __init__(self, datafile, amountOfThreads, trainingSet, similarityTreshold):
+   def __init__(self, datafile, amountOfThreads, 
+                trainingSet, similarityTreshold, outputfile):
       # The file the data is read out of.
       self.datafile = datafile
 
@@ -48,14 +50,35 @@ class Classifier:
       # Boolean which depicts whether or not we are using a training set.
       self.trainingSet = trainingSet
       
+      # File the testing predictions should be written to.
+      self.outputfile = outputfile
+      
       # Float to depict the amount of similarity two questions need to have to be considered equal.
       self.similarityTreshold = similarityTreshold
+      
+      if(not(trainingSet)):
+         # The amount of IDs in the datafile.
+         # Used for preallocation purposes.
+         self.amountOfIDs = self._getAmountOfIDs()
+         
+         # Dictionary to contain the predictions per question pair.
+         # Preallocated for efficiency.
+         self.testDictionary = dict.fromkeys([str(i) for i in range(self.amountOfIDs + 1)])
 
+   def _getAmountOfIDs(self):
+      """
+      Call the external 'tail' command to read out the last line of the datafile.
+      Then return the id which is in the last line, so we know how many question
+      pairs there are in total.
+      """
+      line = str(subprocess.check_output(['tail', '-1', self.datafile]))
+      return int(line.split(',')[0][3:-1])
 
    def startWorkers(self):
       """
       Start as many threads as ordered (provided by variable self.aOT).
-      Also stores all threads in self.threads, so they can be stopped later as well.
+      Also stores all threads in self.threads, so they can be stopped later 
+      as well.
       """
       for i in range(self.aOT):
          t = thr.Thread(target=self.threadWorker)
@@ -91,7 +114,10 @@ class Classifier:
 
    def computeSimilarity(self, q1, q2):
       """
-
+      Computes the similarity between two given questions based on the
+      inverse jaccard similarity (union divided by intersection).
+      No, that's not (yet) a thing.
+      Yes, it works.
       """
 
       sq1 = set(q1)
@@ -146,11 +172,22 @@ class Classifier:
             else: #false negative
                self.fn += 1
 
+   def updateTestingResults(self, sim, pairID):
+      """
+      Checks whether two questions are the same based on the similarity.
+      If so, update the value in the testing dictionary accordingly.
+      """
+      if sim > self.similarityTreshold:
+         self.testDictionary[str(pairID)] = 1
+      else:
+         self.testDictionary[str(pairID)] = 0
+   
    def similarityQuestions(self, row):
       """
       Function to determine the similarity between two given questions.
       For now uses the SequenceMatcher from difflib to do so.
-      Might want to use a custom method in the future, as this gives a low precision.
+      Might want to use a custom method in the future, as this gives a low
+      precision.
       """
       q1 = self.stemQuestion(row[3])
       q2 = self.stemQuestion(row[4])
@@ -160,8 +197,21 @@ class Classifier:
       sim = self.computeSimilarity(q1, q2)
       if(self.trainingSet):
          self.updateTrainingResults(sim, row)
+      else:
+         self.updateTestingResults(sim, row[0])
+         
+   def _writeOutputFile(self):
+      """
+      Write the testDictionary, containing the testing predictions, to a csv file.
+      """
+      with open(self.outputfile, 'w') as of:
+         for key, value in self.testDictionary:
+            of.write("{0},{1}".format(key, value))
 
    def run(self):
+      """
+      Do like everything this program has to offer.
+      """
       # Function which starts the threads.
       self.startWorkers()
 
@@ -185,29 +235,64 @@ class Classifier:
             self.queue.put(None)
          for t in self.threads:
             t.join()
-      return (self.tp, self.fp, self.tn, self.fn)
+      if self.trainingSet:
+         return (self.tp, self.fp, self.tn, self.fn)
+      else:
+         self._writeOutputFile()
+         return (0, 0, 0, 0)
       
 def main(argv):
    """
-   Basically a front-end for the bottom-most two lines.
+   First calls the command-line argument parser.
+   Then calls the class and executes the program.
    """
    if not ((3,0,0) <= sys.version_info[:3]):
 	   raise RuntimeError("At least Python version 3.0 required!")
 	
-   datafile, amountOfThreads, trainingSet, similarityTreshold = getArguments(argv)
-   classifier = Classifier(datafile, amountOfThreads, trainingSet, similarityTreshold)
+   datafile, amountOfThreads, trainingSet, similarityTreshold, outputfile = getArguments(argv)
+   classifier = Classifier(datafile, amountOfThreads, trainingSet, similarityTreshold, outputfile)
    tp, fp, tn, fn = classifier.run()
+   if tp == fp == tn == fn == 0:
+      print("See file {0} for the predictions!".format(outputfile))
+      return 0
    print("""
    Precision: {0}
    Recall: {1}
    """.format((tp / (tp + tn)), (tp / (tp + fp))))
+   
+def usage():
+   print("""
+Usage: python main.py [options]
+Options:
+   -d <file>,  --datafile=<file>    The file which contains the questions
+                                    Default is 'data/train.csv'.
+   -t <int>,   --threads=<int>      The amount of threads to be used when 
+                                    running the program. Default is 8.
+   -s <float>, --similarity=<float> The treshold for which amount of similarity
+                                    will be needed to have two questions be
+                                    estimated as being the same question.
+                                    Default is 0.6.
+   -o <file>,  --outputfile=<file>  The file the testing prediction should be
+                                    put out to, if existent. Else this
+                                    argument has no effect.
+                                    Default is 'data/output.csv'.
+   -e,         --test               Use if the datafile contains a test set, or
+                                    should be considered containing one.
+                                    If not given, the program will assume the
+                                    datafile contains a training set.
+   -h,         --help               Display this help text and exit.
+   
+   Note that this program requires a python version of at least 3.0.0 to be
+   ran with.
+   """)
 
 def getArguments(argv):
    """
    Parses the arguments given certain options.
-   Currently supports reading in a datafile, 
+   Currently supports reading in a specific datafile, 
    specifying the amount of threads used,
    giving the similarity equal questions should at least have,
+   defining the file an eventual test prediction should be put out to,
    and whether the datafile contains a training or a test set.
    All other options call the usage function, which explains
    the user how to correctly call the program.
@@ -215,11 +300,12 @@ def getArguments(argv):
    are the default values as also written in the usage() function.
    """
    try:
-      opts, args = getopt(argv, 'd:t:s:eh', ['datafile=', 'threads=', 'similarity=', 'test', 'help'])
+      opts, args = getopt(argv, 'd:t:s:o:eh', ['datafile=', 'threads=', 'similarity=', 'outputfile=', 'test', 'help'])
    except GetoptError:
       usage()
       sys.exit(2)
    datafile = "data/train.csv"
+   outputfile = "data/output.csv"
    amountOfThreads = 8
    trainingSet = True
    similarity = 0.6
@@ -233,13 +319,17 @@ def getArguments(argv):
       elif opt in ('-s', '--similarity'):
          if 0.0 < float(arg) <= 1.0: #similarity should be between 0 and 1
             similarity = float(arg)
+         else:
+            print("Error: Similarity should be in between 0.0 and 1.0!\nUsing default value {0} instead.".format(similarity))
+      elif opt in ('-o', '--outputfile'):
+         outputfile = arg
       elif opt in ('-e', '--test'):
          trainingSet = False
       else: #includes --help
          usage()
          sys.exit(2)
    
-   return datafile, amountOfThreads, trainingSet, similarity
+   return datafile, amountOfThreads, trainingSet, similarity, outputfile
    
 if __name__ == "__main__":
    main(sys.argv[1:])

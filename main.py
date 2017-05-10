@@ -7,12 +7,14 @@ from nltk.corpus import stopwords #stopwords to filter out
 from difflib import SequenceMatcher as seqmatch #similarity measure between strings
 from PyDictionary import PyDictionary #to find synonyms
 import re #yay regexes. I mean: to filter out nun-alphabetical characters
+import sys, os #for parsing command-line arguments
+from getopt import getopt, GetoptError #also to parse command-line arguments
 
 class Classifier:
    """
    Something about what this program is about.
    """
-   def __init__(self, datafile, amountOfThreads):
+   def __init__(self, datafile, amountOfThreads, trainingSet, similarityTreshold):
       # The file the data is read out of.
       self.datafile = datafile
 
@@ -40,8 +42,14 @@ class Classifier:
       # negatives. All initialised to 0.
       self.tp = self.fp = self.tn = self.fn = 0
 
-      # Dictionary class, used for synonym matching #
+      # Dictionary class, used for synonym matching.
       self.dictionary=PyDictionary()
+      
+      # Boolean which depicts whether or not we are using a training set.
+      self.trainingSet = trainingSet
+      
+      # Float to depict the amount of similarity two questions need to have to be considered equal.
+      self.similarityTreshold = similarityTreshold
 
 
    def startWorkers(self):
@@ -119,6 +127,24 @@ class Classifier:
          return 0
       else:
          return len(q1) / matches'''
+         
+   def updateTrainingResults(self, sim, row):
+      """
+      Updates the true and false positives and negatives based on the result
+      achieved and the result provided by the training set.
+      ...therefore only works on training sets.
+      """
+      with self.lock:
+         if sim > self.similarityTreshold: #we guess they are duplicate questions
+            if row[5] == "1": #true positive
+               self.tp += 1
+            else: #false positive
+               self.fp += 1
+         else: #we guess they are different questions
+            if row[5] == "0": #true negative
+               self.tn += 1
+            else: #false negative
+               self.fn += 1
 
    def similarityQuestions(self, row):
       """
@@ -132,16 +158,8 @@ class Classifier:
       # Compute similarity of the two questions#
       #sim = seqmatch(None, q1, q2).ratio()
       sim = self.computeSimilarity(q1, q2)
-      if sim > 0.6: #we guess they are duplicate questions
-         if row[5] == "1": #true positive
-            self.tp += 1
-         else: #false positive
-            self.fp += 1
-      else: #we guess they are different questions
-         if row[5] == "0": #true negative
-            self.tn += 1
-         else: #false negative
-            self.fn += 1
+      if(self.trainingSet):
+         self.updateTrainingResults(sim, row)
 
    def run(self):
       # Function which starts the threads.
@@ -168,13 +186,60 @@ class Classifier:
          for t in self.threads:
             t.join()
       return (self.tp, self.fp, self.tn, self.fn)
-
-if __name__ == "__main__":
-   datafile = "data/train.csv"
-   amountOfThreads = 8
-   classifier = Classifier(datafile, amountOfThreads)
+      
+def main(argv):
+   """
+   Basically a front-end for the bottom-most two lines.
+   """
+   if not ((3,0,0) <= sys.version_info[:3]):
+	   raise RuntimeError("At least Python version 3.0 required!")
+	
+   datafile, amountOfThreads, trainingSet, similarityTreshold = getArguments(argv)
+   classifier = Classifier(datafile, amountOfThreads, trainingSet, similarityTreshold)
    tp, fp, tn, fn = classifier.run()
    print("""
    Precision: {0}
    Recall: {1}
    """.format((tp / (tp + tn)), (tp / (tp + fp))))
+
+def getArguments(argv):
+   """
+   Parses the arguments given certain options.
+   Currently supports reading in a datafile, 
+   specifying the amount of threads used,
+   giving the similarity equal questions should at least have,
+   and whether the datafile contains a training or a test set.
+   All other options call the usage function, which explains
+   the user how to correctly call the program.
+   Mind that the values given to the variables in this function
+   are the default values as also written in the usage() function.
+   """
+   try:
+      opts, args = getopt(argv, 'd:t:s:eh', ['datafile=', 'threads=', 'similarity=', 'test', 'help'])
+   except GetoptError:
+      usage()
+      sys.exit(2)
+   datafile = "data/train.csv"
+   amountOfThreads = 8
+   trainingSet = True
+   similarity = 0.6
+   for opt, arg in opts:
+      if opt in ('-d', '--datafile'):
+         if os.path.isfile(arg): #if the file exists
+            datafile = arg
+      elif opt in ('-t', '--threads'):
+         if int(arg) > 1: #we need to have at least 1 thread
+            amountOfThreads = int(arg)
+      elif opt in ('-s', '--similarity'):
+         if 0.0 < float(arg) <= 1.0: #similarity should be between 0 and 1
+            similarity = float(arg)
+      elif opt in ('-e', '--test'):
+         trainingSet = False
+      else: #includes --help
+         usage()
+         sys.exit(2)
+   
+   return datafile, amountOfThreads, trainingSet, similarity
+   
+if __name__ == "__main__":
+   main(sys.argv[1:])

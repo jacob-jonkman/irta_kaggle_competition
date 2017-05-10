@@ -20,29 +20,29 @@ class Classifier:
       # Otherwise, the nltk library would try to load multiple times at
       # the same time, which gives errors.
       self.wordsFilter = stopwords.words('english')
-      
+
       # A queue to hold all the data and distribute it to the threads.
       self.queue = Queue()
-      
+
       # A list of all present threads.
       self.threads = []
-      
+
       # A lock to prevent multiple threads writing to the same variable at
       # the same time.
       # Not actually used now.
       self.lock = thr.Lock()
-      
+
       # The amount of threads which should be used.
       # Is required on multiple occasions, and therefore made a class variable.
       self.aOT = amountOfThreads
-      
-      # Amount of, respectively, true and false positives, and true and false 
+
+      # Amount of, respectively, true and false positives, and true and false
       # negatives. All initialised to 0.
       self.tp = self.fp = self.tn = self.fn = 0
 
       # Dictionary class, used for synonym matching #
       self.dictionary=PyDictionary()
-   
+
 
    def startWorkers(self):
       """
@@ -85,26 +85,40 @@ class Classifier:
       """
 
       """
-      matches = 0
-      total = 0
+
+      sq1 = set(q1)
+      sq2 = set(q2)
+
+      ulen = len(set.union(sq1, sq2))
+      ilen = len(set.intersection(sq1, sq2))
+
+      if (ilen == 0):
+         return 0
+
+      return ulen / ilen
+
+      '''matches = 0
       for word in q1:
+
+         # The words actually match.
          if word in q2:
             matches += 1
+
+         # Try synonyms.
          else:
             try:
-               synonyms = self.dictionary.synonym(word)
+               # Try to find a synonym that does not occur in q1 but is in q2.
+               synonyms = set(self.dictionary.synonym(word)) - set(q1)
+               if synonyms:
+                  if set.intersection(synonyms, set(q2)):
+                     matches += 1
             except:
                pass
-            if synonyms:               
-               for i in range(len(synonyms)):
-                  if (synonyms[i] not in q1) and (synonyms[i] in q2):
-                     matches += 1
-                     break
-         total += 1
+
       if matches == 0:
          return 0
       else:
-         return total/matches
+         return len(q1) / matches'''
 
    def similarityQuestions(self, row):
       """
@@ -114,7 +128,7 @@ class Classifier:
       """
       q1 = self.stemQuestion(row[3])
       q2 = self.stemQuestion(row[4])
-      
+
       # Compute similarity of the two questions#
       #sim = seqmatch(None, q1, q2).ratio()
       sim = self.computeSimilarity(q1, q2)
@@ -132,7 +146,7 @@ class Classifier:
    def run(self):
       # Function which starts the threads.
       self.startWorkers()
-      
+
       with open(self.datafile, "r") as f:
          # These two lines are for finding out if there is a header.
          # Can be left commented if the header being present is given.
@@ -157,7 +171,7 @@ class Classifier:
 
 if __name__ == "__main__":
    datafile = "data/train.csv"
-   amountOfThreads = 16
+   amountOfThreads = 8
    classifier = Classifier(datafile, amountOfThreads)
    tp, fp, tn, fn = classifier.run()
    print("""

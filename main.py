@@ -204,9 +204,12 @@ class Classifier:
       """
       Write the testDictionary, containing the testing predictions, to a csv file.
       """
+      #print(self.testDictionary)
       with open(self.outputfile, 'w') as of:
-         for key, value in self.testDictionary:
-            of.write("{0},{1}".format(key, value))
+         for key, value in self.testDictionary.items():
+            if(value == None): #why does this happen?
+               value = 0
+            of.write("{0},{1}\n".format(key, value))
 
    def run(self):
       """

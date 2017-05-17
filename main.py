@@ -241,7 +241,7 @@ class Classifier:
       sys.stdout.write("\r{0} |{1}| {2}{3} {4}".format(prefix, bar, percents, '%', suffix)),
 
       if iteration == total:
-         sys.stdout.write('\n')
+         sys.stdout.write(' Complete \n')
       sys.stdout.flush()
          
    def _writeOutputFile(self):
@@ -283,8 +283,6 @@ class Classifier:
             self.queue.put(None)
          for t in self.threads:
             t.join()
-      # When finished
-      self._printProgressBar(self.amountOfIDs, self.amountOfIDs, prefix = "Progress: ", suffix = "Complete")
       if self.trainingSet:
          return (self.tp, self.fp, self.tn, self.fn)
       else:

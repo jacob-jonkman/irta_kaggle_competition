@@ -226,6 +226,7 @@ class Classifier:
                          decimals = 1):
       """
       Creates a progress bar. Call it after each computation.
+      Source: http://stackoverflow.com/a/34325723/1762311
       @params:
          iteration   - Required  : current iteration (int)
          total       - Required  : total amount of iterations (int)

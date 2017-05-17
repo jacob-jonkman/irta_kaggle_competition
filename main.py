@@ -56,11 +56,19 @@ class Classifier:
       # Float to depict the amount of similarity two questions need to have to be considered equal.
       self.similarityTreshold = similarityTreshold
       
+      # To keep track of where the progressbar is, so it won't go back if a slower thread finishes an iteration of lower number.
+      # Only used there, but needs to be global.
+      self.lastIteration = -1
+      
+      # The amount of IDs in the datafile.
+      # Used for preallocation purposes and the progress bar.
+      self.amountOfIDs = self._getAmountOfIDs()
+      
+      # Length of the progress bar.
+      # Not really an argument for the user, change here when needed.
+      self.barLength = 50
+      
       if(not(trainingSet)):
-         # The amount of IDs in the datafile.
-         # Used for preallocation purposes.
-         self.amountOfIDs = self._getAmountOfIDs()
-         
          # Dictionary to contain the predictions per question pair.
          # Preallocated for efficiency.
          self.testDictionary = dict.fromkeys([str(i) for i in range(self.amountOfIDs + 1)])
@@ -96,7 +104,10 @@ class Classifier:
          row = self.queue.get() #get a row of data
          if row is None: #ending criterium
             break
-         self.similarityQuestions(row) #the actual working function
+         try:
+            self.similarityQuestions(row) #the actual working function
+         except:
+            print("Error processing {0}".format(row))
          self.queue.task_done() #inform the queue one task is done
 
    def stemQuestion(self, question):
@@ -160,17 +171,16 @@ class Classifier:
       achieved and the result provided by the training set.
       ...therefore only works on training sets.
       """
-      with self.lock:
-         if sim > self.similarityTreshold: #we guess they are duplicate questions
-            if row[5] == "1": #true positive
-               self.tp += 1
-            else: #false positive
-               self.fp += 1
-         else: #we guess they are different questions
-            if row[5] == "0": #true negative
-               self.tn += 1
-            else: #false negative
-               self.fn += 1
+      if sim > self.similarityTreshold: #we guess they are duplicate questions
+         if row[5] == "1": #true positive
+            self.tp += 1
+         else: #false positive
+            self.fp += 1
+      else: #we guess they are different questions
+         if row[5] == "0": #true negative
+            self.tn += 1
+         else: #false negative
+            self.fn += 1
 
    def updateTestingResults(self, sim, pairID):
       """
@@ -189,16 +199,50 @@ class Classifier:
       Might want to use a custom method in the future, as this gives a low
       precision.
       """
-      q1 = self.stemQuestion(row[3])
-      q2 = self.stemQuestion(row[4])
+      indexone = 1
+      indextwo = 2
+      #indices of questions are different in test/trainingset
+      if(self.trainingSet): 
+         indexone = 3
+         indextwo = 4
+      q1 = self.stemQuestion(row[indexone])
+      q2 = self.stemQuestion(row[indextwo])
 
       # Compute similarity of the two questions#
       #sim = seqmatch(None, q1, q2).ratio()
       sim = self.computeSimilarity(q1, q2)
-      if(self.trainingSet):
-         self.updateTrainingResults(sim, row)
-      else:
-         self.updateTestingResults(sim, row[0])
+      with self.lock:
+         currentIteration = int(row[0])
+         # Only print the bar if it will fill more.
+         if(currentIteration > self.lastIteration):
+            self.lastIteration = currentIteration
+            self._printProgressBar(int(row[0]), self.amountOfIDs, prefix = "Progress: ")
+         if(self.trainingSet):
+            self.updateTrainingResults(sim, row)
+         else:
+            self.updateTestingResults(sim, row[0])
+         
+   def _printProgressBar(self, iteration, total, prefix='', suffix = '', 
+                         decimals = 1):
+      """
+      Creates a progress bar. Call it after each computation.
+      @params:
+         iteration   - Required  : current iteration (int)
+         total       - Required  : total amount of iterations (int)
+         prefix        Optional  : prefix string (str)
+         suffix        Optional  : suffix string (str)
+         decimals      Optional  : positive number of decimals in percentage (int)
+      """
+      strFormat = "{0:." + str(decimals) + "f}"
+      percents = strFormat.format(100 * (iteration / float(total)))
+      filledLength = int(round(self.barLength * iteration / float(total)))
+      bar = '█' * filledLength + '-' * (self.barLength - filledLength)
+
+      sys.stdout.write("\r{0} |{1}| {2}{3} {4}".format(prefix, bar, percents, '%', suffix)),
+
+      if iteration == total:
+         sys.stdout.write('\n')
+      sys.stdout.flush()
          
    def _writeOutputFile(self):
       """
@@ -217,7 +261,8 @@ class Classifier:
       """
       # Function which starts the threads.
       self.startWorkers()
-
+      #Show the progress bar
+      self._printProgressBar(0, self.amountOfIDs, prefix = "Progress: ")
       with open(self.datafile, "r") as f:
          # These two lines are for finding out if there is a header.
          # Can be left commented if the header being present is given.
@@ -238,6 +283,8 @@ class Classifier:
             self.queue.put(None)
          for t in self.threads:
             t.join()
+      # When finished
+      self._printProgressBar(self.amountOfIDs, self.amountOfIDs, prefix = "Progress: ", suffix = "Complete")
       if self.trainingSet:
          return (self.tp, self.fp, self.tn, self.fn)
       else:

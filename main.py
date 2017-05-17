@@ -80,7 +80,13 @@ class Classifier:
       pairs there are in total.
       """
       line = str(subprocess.check_output(['tail', '-1', self.datafile]))
-      return int(line.split(',')[0][3:-1])
+      line = line.split(',')[0]
+
+      # The training set encloses the ID in quotes, while the test set does not.
+      if (self.trainingSet):
+         return int(line[3:-1])
+
+      return int(line[2:])
 
    def startWorkers(self):
       """

@@ -11,13 +11,19 @@ import matplotlib.pyplot as plt
 from pylab import plot, show, subplot, specgram, imshow, savefig
 import os.path
 
+from sklearn.metrics.pairwise import cosine_similarity as cs
+from sklearn.metrics.pairwise import manhattan_distances as md
+from sklearn.metrics.pairwise import euclidean_distances as ed
+from sklearn.metrics import jaccard_similarity_score as jsc
+from sklearn.neighbors import DistanceMetric
+from sklearn.preprocessing import MinMaxScaler
+
 RS = 12357
 ROUNDS = 315
 
 print("Started")
 np.random.seed(RS)
 input_folder = 'data/'
-features_folder = 'features/'
 
 def train_xgb(X, y, params):
 	print("Will train XGB for {} rounds, RandomSeed: {}".format(ROUNDS, RS))
@@ -27,7 +33,7 @@ def train_xgb(X, y, params):
 	xg_val = xgb.DMatrix(X_val, label=y_val)
 
 	watchlist  = [(xg_train,'train'), (xg_val,'eval')]
-	return xgb.train(params, xg_train, ROUNDS, watchlist)
+	return xgb.train(params, xg_train, ROUNDS, watchlist, early_stopping_rounds=10)
 
 def predict_xgb(clr, X_test):
 	return clr.predict(xgb.DMatrix(X_test))
@@ -61,9 +67,11 @@ def main():
 
 	df_train = pd.read_csv(input_folder + 'train.csv')
 	df_test  = pd.read_csv(input_folder + 'test.csv')
-			
-	print("Original data: X_train: {}, X_test: {}".format(df_train.shape, df_test.shape))
 
+	df_train = df_train.fillna(' ')
+	df_test = df_test.fillna(' ')
+
+	print("Original data: X_train: {}, X_test: {}".format(df_train.shape, df_test.shape))
 	print("Features processing, be patient...")
 
 	# If a word appears only once, we ignore it completely (likely a typo)
@@ -117,13 +125,19 @@ def main():
 			R2gram = 0
 		else:
 			R2gram = len(shared_2gram) / (len(q1_2gram) + len(q2_2gram))
-		return '{}:{}:{}:{}:{}:{}:{}:{}'.format(R1, R2, len(shared_words), R31, R32, R2gram, Rcosine, words_hamming)	
+		return '{}:{}:{}:{}:{}:{}:{}:{}'.format(R1, R2, len(shared_words), R31, R32, R2gram, Rcosine, words_hamming)
+  
+	def jaccard(row):
+		intersection = set(row['question1']).intersection(set(row['question2']))
+		union = set(row['question1']).union(row['question2'])
+		if len(union) == 0:
+			uw = [1]
+		return (len(intersection) / len(union))
 
 	df = pd.concat([df_train, df_test])
 	x = pd.DataFrame()
 	
 	if not os.path.isfile(input_folder + "features.csv"):
-		print("oke")
 		df['word_shares'] = df.apply(word_shares, axis=1, raw=True)
 		x['word_match'] = df['word_shares'].apply(lambda x: float(x.split(':')[0]))
 	
@@ -161,6 +175,8 @@ def main():
 
 		x['exactly_same'] = (df['question1'] == df['question2']).astype(int)
 		x['duplicated'] = df.duplicated(['question1','question2']).astype(int)
+		
+		x['jaccard'] = df.apply(jaccard, axis=1, raw=True)
 	
 		## Certain word counts are also used as features ##
 		add_word_count(x, df,'how')
@@ -183,11 +199,9 @@ def main():
 		add_word_count(x, df,'is')
 		add_word_count(x, df,'are')
 
-		write_to_file(x, 'features')
+		#write_to_file(x, 'features')
 	else:
-		print("LEZEN\n")
 		x = pd.read_csv(input_folder + "features.csv")
-		print("gelezen.", x.shape)
   
 	print(x.columns)
 	print(x.describe())
@@ -223,20 +237,19 @@ def main():
 	preds = predict_xgb(clr, x_test)
 	clr.save_model("test.txt")
 
+	print("Writing output...")
+	sub = pd.DataFrame()
+	sub['test_id'] = df_test['test_id']
+	sub['is_duplicate'] = preds *.75	
+	sub.to_csv("xgb_seed{}_n{}.csv".format(RS, ROUNDS), index=False)
 
-	#print("Writing output...")
-	#sub = pd.DataFrame()
-	#sub['test_id'] = df_test['test_id']
-	#sub['is_duplicate'] = preds *.75	
-	#sub.to_csv("xgb_seed{}_n{}.csv".format(RS, ROUNDS), index=False)
+	print("Features importances...")
+	importance = clr.get_fscore(fmap='xgb.fmap')
+	importance = sorted(importance.items(), key=operator.itemgetter(1))
+	ft = pd.DataFrame(importance, columns=['feature', 'fscore'])
 
-	#print("Features importances...")
-	#importance = clr.get_fscore(fmap='xgb.fmap')
-	#importance = sorted(importance.items(), key=operator.itemgetter(1))
-	#ft = pd.DataFrame(importance, columns=['feature', 'fscore'])
-
-	#ft.plot(kind='barh', x='feature', y='fscore', legend=False, figsize=(10, 25))
-	#plt.gcf().savefig('features_importance.png')
+	ft.plot(kind='barh', x='feature', y='fscore', legend=False, figsize=(10, 25))
+	plt.gcf().savefig('features_importance.png')
 
 main()
 print("Done.")

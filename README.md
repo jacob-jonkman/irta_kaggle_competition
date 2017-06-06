@@ -4,7 +4,7 @@
 > python3 main.py
 
 # Required packages: 
-stemming, numpy, threading, queue, csv, nltk, PyDictionary and difflib
+stemming, numpy, threading, queue, csv, nltk, PyDictionary, python-levenshtein and difflib
 
 # Also: 
 Run: 

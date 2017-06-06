@@ -18,6 +18,8 @@ from sklearn.metrics import jaccard_similarity_score as jsc
 from sklearn.neighbors import DistanceMetric
 from sklearn.preprocessing import MinMaxScaler
 
+from Levenshtein import *
+
 RS = 12357
 ROUNDS = 315
 EARLY_STOPPING = 4
@@ -57,31 +59,6 @@ def write_to_file(lst, name):
 	if not os.path.isfile(filename):
 		lst.to_csv(filename)
 
-def levenshtein(row):
-	s1=row['question1']
-	s2=row['question2']
-	
-	if len(s1) < len(s2):
-		save = s1
-		s1 = s2
-		s2 = save
-
-	# len(s1) >= len(s2)
-	if len(s2) == 0:
-		return len(s1)
-
-	previous_row = range(len(s2) + 1)
-	for i, c1 in enumerate(s1):
-		current_row = [i + 1]
-		for j, c2 in enumerate(s2):
-			insertions = previous_row[j + 1] + 1 # j+1 instead of j since previous_row and current_row are one character longer
-			deletions = current_row[j] + 1       # than s2
-			substitutions = previous_row[j] + (c1 != c2)
-			current_row.append(min(insertions, deletions, substitutions))
-		previous_row = current_row
-		
-	return previous_row[-1]
-
 def main():
 	params = {}
 	params['objective'] = 'binary:logistic'
@@ -91,13 +68,18 @@ def main():
 	params['silent'] = 1
 	params['seed'] = RS
 
-	#df_train = pd.read_csv(input_folder + 'train.csv')
-	#df_test  = pd.read_csv(input_folder + 'test.csv')
-	df_train = pd.read_csv(input_folder + 'preprocessed_train.csv')
-	df_test  = pd.read_csv(input_folder + 'preprocessed_test.csv')
+	df_train = pd.read_csv(input_folder + 'train.csv')
+	df_test  = pd.read_csv(input_folder + 'test.csv')
 
 	df_train = df_train.fillna(' ')
 	df_test = df_test.fillna(' ')
+	
+	### Replace {?}
+	print("Start replacing non-letter characters")
+	df_train['question1'] = df_train['question1'].apply(lambda x:str(x).replace("?",""))
+	df_train['question2'] = df_train['question2'].apply(lambda x:str(x).replace("?",""))
+	df_test['question1'] = df_test['question1'].apply(lambda x:str(x).replace("?",""))
+	df_test['question2'] = df_test['question2'].apply(lambda x:str(x).replace("?",""))
 
 	print("Original data: X_train: {}, X_test: {}".format(df_train.shape, df_test.shape))
 	print("Features processing, be patient...")
@@ -119,14 +101,21 @@ def main():
 		q1 = set(q1_list)
 		q1words = q1.difference(stops)
 		if len(q1words) == 0:
-			return '0:0:0:0:0:0:0:0:0:0'
+			return '0:0:0:0:0:0:0:0:0:0:0'
         
 		q2_list = str(row['question2']).lower().split()
 		q2 = set(q2_list)
 		q2words = q2.difference(stops)
 		if len(q2words) == 0:
-			return '0:0:0:0:0:0:0:0:0:0'
-
+			return '0:0:0:0:0:0:0:0:0:0:0'
+		
+		intersection = q1.intersection(q2)
+		union = q1.union(q2)
+		
+		jaccard = len(intersection)/len(union)
+		dice = 2*len(intersection)/(len(q1)+len(q1))
+		lev = distance(row['question1'], row['question2'])
+		
 		words_hamming = sum(1 for i in zip(q1_list, q2_list) if i[0]==i[1])/max(len(q1_list), len(q2_list))
 
 		q1stops = q1.intersection(stops)
@@ -142,9 +131,6 @@ def main():
 		q1_weights = [weights.get(w, 0) for w in q1words]
 		q2_weights = [weights.get(w, 0) for w in q2words]
 		total_weights = q1_weights + q1_weights
-		
-		intersection = q1words.intersection(q2words)
-		union = q1words.union(q2words)
  	
 		R1 = np.sum(shared_weights) / np.sum(total_weights) #tfidf share
 		R2 = len(shared_words) / (len(q1words) + len(q2words) - len(shared_words)) #count share
@@ -152,19 +138,16 @@ def main():
 		R32 = len(q2stops) / len(q2words) #stops in q2
 		Rcosine_denominator = (np.sqrt(np.dot(q1_weights,q1_weights))*np.sqrt(np.dot(q2_weights,q2_weights)))
 		Rcosine = np.dot(shared_weights, shared_weights)/Rcosine_denominator
-		jaccard = len(intersection)/len(union)
-		dice = 2*len(intersection)/(len(q1words)+len(q2words))
-
+		
 		if len(q1_2gram) + len(q2_2gram) == 0:
 			R2gram = 0
 		else:
 			R2gram = len(shared_2gram) / (len(q1_2gram) + len(q2_2gram))
+		return '{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}'.format(R1, R2, len(shared_words), R31, R32, R2gram, Rcosine, words_hamming, jaccard, dice, lev)
 
-		return '{}:{}:{}:{}:{}:{}:{}:{}:{}:{}'.format(R1, R2, len(shared_words), R31, R32, R2gram, Rcosine, words_hamming, jaccard, dice)
-	
 	df = pd.concat([df_train, df_test])
 	x = pd.DataFrame()
-		
+	
 	if not os.path.isfile(input_folder + "features.csv"):
 		df['word_shares'] = df.apply(word_shares, axis=1, raw=True)
 		x['word_match'] = df['word_shares'].apply(lambda x: float(x.split(':')[0]))
@@ -178,9 +161,10 @@ def main():
 		x['shared_2gram']     = df['word_shares'].apply(lambda x: float(x.split(':')[5]))
 		x['cosine']           = df['word_shares'].apply(lambda x: float(x.split(':')[6]))
 		x['words_hamming']    = df['word_shares'].apply(lambda x: float(x.split(':')[7]))
-		x['jaccard']					= df['word_shares'].apply(lambda x: float(x.split(':')[8]))
-		x['dice']    					= df['word_shares'].apply(lambda x: float(x.split(':')[9]))
-#		x['levenshtein']			=	df.apply(levenshtein, axis=1, raw=True)
+
+		x['jaccard']    			= df['word_shares'].apply(lambda x: float(x.split(':')[8]))
+		x['dice']							= df['word_shares'].apply(lambda x: float(x.split(':')[9]))
+		x['levenshtein']			=	df['word_shares'].apply(lambda x: float(x.split(':')[10]))
 		
 		x['diff_stops_r']     = x['stops1_ratio'] - x['stops2_ratio']
 
@@ -228,9 +212,9 @@ def main():
 		add_word_count(x, df,'is')
 		add_word_count(x, df,'are')
 
-		#write_to_file(x, 'features')
-	else:
-		x = pd.read_csv(input_folder + "features.csv")
+	#write_to_file(x, 'features')
+	#else:
+	#	x = pd.read_csv(input_folder + "features.csv")
   
 	print(x.columns)
 	print(x.describe())

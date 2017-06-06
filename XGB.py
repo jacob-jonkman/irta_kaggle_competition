@@ -21,7 +21,7 @@ from sklearn.preprocessing import MinMaxScaler
 from Levenshtein import *
 
 RS = 12357
-ROUNDS = 315
+ROUNDS = 2500
 EARLY_STOPPING = 4
 
 print("Started")
@@ -74,13 +74,6 @@ def main():
 	df_train = df_train.fillna(' ')
 	df_test = df_test.fillna(' ')
 	
-	### Replace {?}
-	print("Start replacing non-letter characters")
-	df_train['question1'] = df_train['question1'].apply(lambda x:str(x).replace("?",""))
-	df_train['question2'] = df_train['question2'].apply(lambda x:str(x).replace("?",""))
-	df_test['question1'] = df_test['question1'].apply(lambda x:str(x).replace("?",""))
-	df_test['question2'] = df_test['question2'].apply(lambda x:str(x).replace("?",""))
-
 	print("Original data: X_train: {}, X_test: {}".format(df_train.shape, df_test.shape))
 	print("Features processing, be patient...")
 
@@ -101,13 +94,13 @@ def main():
 		q1 = set(q1_list)
 		q1words = q1.difference(stops)
 		if len(q1words) == 0:
-			return '0:0:0:0:0:0:0:0:0:0:0'
+			return '0:0:0:0:0:0:0:0:0:0:0:0:0'
         
 		q2_list = str(row['question2']).lower().split()
 		q2 = set(q2_list)
 		q2words = q2.difference(stops)
 		if len(q2words) == 0:
-			return '0:0:0:0:0:0:0:0:0:0:0'
+			return '0:0:0:0:0:0:0:0:0:0:0:0:0'
 		
 		intersection = q1.intersection(q2)
 		union = q1.union(q2)
@@ -139,82 +132,90 @@ def main():
 		Rcosine_denominator = (np.sqrt(np.dot(q1_weights,q1_weights))*np.sqrt(np.dot(q2_weights,q2_weights)))
 		Rcosine = np.dot(shared_weights, shared_weights)/Rcosine_denominator
 		
+		if q1_list[0]==q2_list[0]:
+			first_word_match = 1
+		else:
+			first_word_match = 0
+		
+		if q1_list[len(q1_list)-1]==q2_list[len(q2_list)-1]:
+			last_word_match = 1
+		else:
+			last_word_match = 0
+		
 		if len(q1_2gram) + len(q2_2gram) == 0:
 			R2gram = 0
 		else:
 			R2gram = len(shared_2gram) / (len(q1_2gram) + len(q2_2gram))
-		return '{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}'.format(R1, R2, len(shared_words), R31, R32, R2gram, Rcosine, words_hamming, jaccard, dice, lev)
+		return '{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}'.format(R1, R2, len(shared_words), R31, R32, R2gram, Rcosine, words_hamming, jaccard, dice, lev, first_word_match, last_word_match)
 
 	df = pd.concat([df_train, df_test])
 	x = pd.DataFrame()
 	
-	if not os.path.isfile(input_folder + "features.csv"):
-		df['word_shares'] = df.apply(word_shares, axis=1, raw=True)
-		x['word_match'] = df['word_shares'].apply(lambda x: float(x.split(':')[0]))
+	df['word_shares'] = df.apply(word_shares, axis=1, raw=True)
+	x['word_match'] = df['word_shares'].apply(lambda x: float(x.split(':')[0]))
+
+	x['word_match_2root'] = np.sqrt(x['word_match'])
+	x['tfidf_word_match'] = df['word_shares'].apply(lambda x: float(x.split(':')[1]))
+	x['shared_count']     = df['word_shares'].apply(lambda x: float(x.split(':')[2]))
+
+	x['stops1_ratio']     = df['word_shares'].apply(lambda x: float(x.split(':')[3]))
+	x['stops2_ratio']     = df['word_shares'].apply(lambda x: float(x.split(':')[4]))
+	x['shared_2gram']     = df['word_shares'].apply(lambda x: float(x.split(':')[5]))
+	x['cosine']           = df['word_shares'].apply(lambda x: float(x.split(':')[6]))
+	x['words_hamming']    = df['word_shares'].apply(lambda x: float(x.split(':')[7]))
+
+	x['jaccard']    			= df['word_shares'].apply(lambda x: float(x.split(':')[8]))
+	x['dice']							= df['word_shares'].apply(lambda x: float(x.split(':')[9]))
+	x['levenshtein']			=	df['word_shares'].apply(lambda x: float(x.split(':')[10]))
 	
-		x['word_match_2root'] = np.sqrt(x['word_match'])
-		x['tfidf_word_match'] = df['word_shares'].apply(lambda x: float(x.split(':')[1]))
-		x['shared_count']     = df['word_shares'].apply(lambda x: float(x.split(':')[2]))
-
-		x['stops1_ratio']     = df['word_shares'].apply(lambda x: float(x.split(':')[3]))
-		x['stops2_ratio']     = df['word_shares'].apply(lambda x: float(x.split(':')[4]))
-		x['shared_2gram']     = df['word_shares'].apply(lambda x: float(x.split(':')[5]))
-		x['cosine']           = df['word_shares'].apply(lambda x: float(x.split(':')[6]))
-		x['words_hamming']    = df['word_shares'].apply(lambda x: float(x.split(':')[7]))
-
-		x['jaccard']    			= df['word_shares'].apply(lambda x: float(x.split(':')[8]))
-		x['dice']							= df['word_shares'].apply(lambda x: float(x.split(':')[9]))
-		x['levenshtein']			=	df['word_shares'].apply(lambda x: float(x.split(':')[10]))
-		
-		x['diff_stops_r']     = x['stops1_ratio'] - x['stops2_ratio']
-
-		x['len_q1'] = df['question1'].apply(lambda x: len(str(x)))
-		x['len_q2'] = df['question2'].apply(lambda x: len(str(x)))
-		x['diff_len'] = x['len_q1'] - x['len_q2']
-
-		x['caps_count_q1'] = df['question1'].apply(lambda x:sum(1 for i in str(x) if i.isupper()))
-		x['caps_count_q2'] = df['question2'].apply(lambda x:sum(1 for i in str(x) if i.isupper()))
-		x['diff_caps'] = x['caps_count_q1'] - x['caps_count_q2']
-
-		x['len_char_q1'] = df['question1'].apply(lambda x: len(str(x).replace(' ', '')))
-		x['len_char_q2'] = df['question2'].apply(lambda x: len(str(x).replace(' ', '')))
-		x['diff_len_char'] = x['len_char_q1'] - x['len_char_q2']
-
-		x['len_word_q1'] = df['question1'].apply(lambda x: len(str(x).split()))
-		x['len_word_q2'] = df['question2'].apply(lambda x: len(str(x).split()))
-		x['diff_len_word'] = x['len_word_q1'] - x['len_word_q2']
-
-		x['avg_world_len1'] = x['len_char_q1'] / x['len_word_q1']
-		x['avg_world_len2'] = x['len_char_q2'] / x['len_word_q2']
-		x['diff_avg_word'] = x['avg_world_len1'] - x['avg_world_len2']
-
-		x['exactly_same'] = (df['question1'] == df['question2']).astype(int)
-		x['duplicated'] = df.duplicated(['question1','question2']).astype(int)
+	x['first_word_match']	= df['word_shares'].apply(lambda x: float(x.split(':')[11]))
+	x['last_word_match'] 	= df['word_shares'].apply(lambda x: float(x.split(':')[12]))
 	
-		## Certain word counts are also used as features ##
-		add_word_count(x, df,'how')
-		add_word_count(x, df,'what')
-		add_word_count(x, df,'which')
-		add_word_count(x, df,'who')
-		add_word_count(x, df,'where')
-		add_word_count(x, df,'when')
-		add_word_count(x, df,'why')
+	x['diff_stops_r']     = x['stops1_ratio'] - x['stops2_ratio']
 
-		# Added #
-		add_word_count(x, df,'if')
-		add_word_count(x, df,'do')
-		add_word_count(x, df,'does')
-		add_word_count(x, df,'did')
-		add_word_count(x, df,'can')
-		add_word_count(x, df,'could')
-		add_word_count(x, df,'is')
-		add_word_count(x, df,'was')
-		add_word_count(x, df,'is')
-		add_word_count(x, df,'are')
+	x['len_q1'] = df['question1'].apply(lambda x: len(str(x)))
+	x['len_q2'] = df['question2'].apply(lambda x: len(str(x)))
+	x['diff_len'] = x['len_q1'] - x['len_q2']
 
-	#write_to_file(x, 'features')
-	#else:
-	#	x = pd.read_csv(input_folder + "features.csv")
+	x['caps_count_q1'] = df['question1'].apply(lambda x:sum(1 for i in str(x) if i.isupper()))
+	x['caps_count_q2'] = df['question2'].apply(lambda x:sum(1 for i in str(x) if i.isupper()))
+	x['diff_caps'] = x['caps_count_q1'] - x['caps_count_q2']
+
+	x['len_char_q1'] = df['question1'].apply(lambda x: len(str(x).replace(' ', '')))
+	x['len_char_q2'] = df['question2'].apply(lambda x: len(str(x).replace(' ', '')))
+	x['diff_len_char'] = x['len_char_q1'] - x['len_char_q2']
+
+	x['len_word_q1'] = df['question1'].apply(lambda x: len(str(x).split()))
+	x['len_word_q2'] = df['question2'].apply(lambda x: len(str(x).split()))
+	x['diff_len_word'] = x['len_word_q1'] - x['len_word_q2']
+
+	x['avg_world_len1'] = x['len_char_q1'] / x['len_word_q1']
+	x['avg_world_len2'] = x['len_char_q2'] / x['len_word_q2']
+	x['diff_avg_word'] = x['avg_world_len1'] - x['avg_world_len2']
+
+	x['exactly_same'] = (df['question1'] == df['question2']).astype(int)
+	x['duplicated'] = df.duplicated(['question1','question2']).astype(int)
+
+	## Certain word counts are also used as features ##
+	add_word_count(x, df,'how')
+	add_word_count(x, df,'what')
+	add_word_count(x, df,'which')
+	add_word_count(x, df,'who')
+	add_word_count(x, df,'where')
+	add_word_count(x, df,'when')
+	add_word_count(x, df,'why')
+
+	# Added #
+	add_word_count(x, df,'if')
+	add_word_count(x, df,'do')
+	add_word_count(x, df,'does')
+	add_word_count(x, df,'did')
+	add_word_count(x, df,'can')
+	add_word_count(x, df,'could')
+	add_word_count(x, df,'is')
+	add_word_count(x, df,'was')
+	add_word_count(x, df,'is')
+	add_word_count(x, df,'are')
   
 	print(x.columns)
 	print(x.describe())
